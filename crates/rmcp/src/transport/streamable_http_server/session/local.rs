@@ -52,18 +52,17 @@ impl SessionManager for LocalSessionManager {
         self.sessions.write().await.insert(id.clone(), handle);
         Ok((id, WorkerTransport::spawn(worker)))
     }
+
     async fn initialize_session(
         &self,
         id: &SessionId,
         message: ClientJsonRpcMessage,
     ) -> Result<ServerJsonRpcMessage, Self::Error> {
-        let sessions = self.sessions.read().await;
-        let handle = sessions
-            .get(id)
-            .ok_or(LocalSessionManagerError::SessionNotFound(id.clone()))?;
+        let handle = self.get_handle(id).await?;
         let response = handle.initialize(message).await?;
         Ok(response)
     }
+
     async fn close_session(&self, id: &SessionId) -> Result<(), Self::Error> {
         let mut sessions = self.sessions.write().await;
         if let Some(handle) = sessions.remove(id) {
@@ -71,19 +70,18 @@ impl SessionManager for LocalSessionManager {
         }
         Ok(())
     }
+
     async fn has_session(&self, id: &SessionId) -> Result<bool, Self::Error> {
         let sessions = self.sessions.read().await;
         Ok(sessions.contains_key(id))
     }
+
     async fn create_stream(
         &self,
         id: &SessionId,
         message: ClientJsonRpcMessage,
     ) -> Result<impl Stream<Item = ServerSseMessage> + Send + 'static, Self::Error> {
-        let sessions = self.sessions.read().await;
-        let handle = sessions
-            .get(id)
-            .ok_or(LocalSessionManagerError::SessionNotFound(id.clone()))?;
+        let handle = self.get_handle(id).await?;
         let receiver = handle.establish_request_wise_channel().await?;
         handle
             .push_message(message, receiver.http_request_id)
@@ -95,10 +93,7 @@ impl SessionManager for LocalSessionManager {
         &self,
         id: &SessionId,
     ) -> Result<impl Stream<Item = ServerSseMessage> + Send + 'static, Self::Error> {
-        let sessions = self.sessions.read().await;
-        let handle = sessions
-            .get(id)
-            .ok_or(LocalSessionManagerError::SessionNotFound(id.clone()))?;
+        let handle = self.get_handle(id).await?;
         let receiver = handle.establish_common_channel().await?;
         Ok(ReceiverStream::new(receiver.inner))
     }
@@ -108,10 +103,7 @@ impl SessionManager for LocalSessionManager {
         id: &SessionId,
         last_event_id: String,
     ) -> Result<impl Stream<Item = ServerSseMessage> + Send + 'static, Self::Error> {
-        let sessions = self.sessions.read().await;
-        let handle = sessions
-            .get(id)
-            .ok_or(LocalSessionManagerError::SessionNotFound(id.clone()))?;
+        let handle = self.get_handle(id).await?;
         let receiver = handle.resume(last_event_id.parse()?).await?;
         Ok(ReceiverStream::new(receiver.inner))
     }
@@ -121,12 +113,22 @@ impl SessionManager for LocalSessionManager {
         id: &SessionId,
         message: ClientJsonRpcMessage,
     ) -> Result<(), Self::Error> {
-        let sessions = self.sessions.read().await;
-        let handle = sessions
-            .get(id)
-            .ok_or(LocalSessionManagerError::SessionNotFound(id.clone()))?;
+        let handle = self.get_handle(id).await?;
         handle.push_message(message, None).await?;
         Ok(())
+    }
+}
+
+impl LocalSessionManager {
+    async fn get_handle(
+        &self,
+        id: &SessionId,
+    ) -> Result<LocalSessionHandle, LocalSessionManagerError> {
+        let sessions = self.sessions.read().await;
+        sessions
+            .get(id)
+            .cloned()
+            .ok_or_else(|| LocalSessionManagerError::SessionNotFound(id.clone()))
     }
 }
 
