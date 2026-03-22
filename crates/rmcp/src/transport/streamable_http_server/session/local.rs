@@ -64,8 +64,11 @@ impl SessionManager for LocalSessionManager {
     }
 
     async fn close_session(&self, id: &SessionId) -> Result<(), Self::Error> {
-        let mut sessions = self.sessions.write().await;
-        if let Some(handle) = sessions.remove(id) {
+        let handle = {
+            let mut sessions = self.sessions.write().await;
+            sessions.remove(id)
+        };
+        if let Some(handle) = handle {
             handle.close().await?;
         }
         Ok(())
